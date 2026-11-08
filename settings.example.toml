@@ -1,0 +1,73 @@
+# Copy to settings.toml (gitignored) and fill in.
+
+# Art, the Home Assistant token and runtime state live here. Defaults to ./data.
+# data_dir = "~/still-life-data"
+
+[home_assistant]
+host = "homeassistant.local"
+port = 8123
+# token_file = "~/still-life-data/ha_token"   # default: <data dir>/ha_token (a long-lived access token)
+
+[weather]
+entity = "weather.forecast_home"
+
+[location]                    # for the rain nowcast; leave out to skip it
+latitude = 40.71
+longitude = -74.00
+
+[hub]
+ip = "192.168.1.50"           # the Nest Hub
+stream_port = 8099
+# host_ip = "192.168.1.10"    # this machine, as the Hub reaches it (default: detected)
+
+[display]
+night_start = 22              # dim art and dark ground from this hour...
+night_end = 6                 # ...until this one
+clock_24h = false
+
+[art]
+contact = "you@example.com"   # Wikimedia asks for a contact in fetch_art.py's User-Agent
+# dir = "~/still-life-data/art"
+
+# Departures: leave the whole section out to hide them.
+[transit]
+feed_url = "https://api-endpoint.mta.info/Dataservice/mtagtfsfeeds/nyct%2Fgtfs-l"   # any GTFS-realtime trip-updates feed
+stop_id = "L08N"              # your stop (and direction) in that feed
+route = "L"                   # shown in the bullet
+station = "Bedford Av"
+direction = "Manhattan-bound"
+walk_min = 4                  # hide departures you can't reach in time
+# Service alerts (MTA only):
+# alerts_url = "https://api-endpoint.mta.info/Dataservice/mtagtfsfeeds/camsys%2Fsubway-alerts.json"
+# trip_stops = ["L01", "L02", "L03", "L04", "L05", "L06", "L07", "L08"]
+
+# Graph cells along the bottom, left to right.
+[[graphs]]
+type = "ha"
+entity = "sensor.living_room_temperature"
+label = "Living room"
+days = 30
+smooth = 1
+decimals = 1
+
+[[graphs]]
+type = "ha"
+entity = "sensor.home_energy_daily"
+label = "Energy"
+days = 30
+decimals = 1
+
+# A JSON file another program writes, e.g.
+# {"generated": "2026-11-08T22:07:34Z", "since": "2026-08-17", "change": 15.3,
+#  "weeks": [{"week": "2026-08-17", "value": 100.0}, ...]}
+# [[graphs]]
+# type = "json"
+# path = "/path/to/progress.json"
+# label = "Progress"
+# series = "weeks[].value"
+# value = "change"
+# format = "{:+.1f}%"
+# note = "since {since}"
+# updated = "generated"
+# stale_after_days = 4
+# stale_note = "as of {generated}"

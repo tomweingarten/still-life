@@ -1,0 +1,21 @@
+#!/bin/sh
+# Blocks commits that would publish personal data or secrets.
+# Enable: git config core.hooksPath .githooks
+fail=0
+staged=$(git diff --cached --name-only --diff-filter=ACMR)
+
+for f in $staged; do
+    case "$f" in
+        fonts/*) ;;
+        settings.toml|data/*|*token*|*.env|.env*|*.png|*.jpg|*.jpeg|*.mp4|*.json)
+            echo "blocked: $f looks like personal data or a secret (data and settings stay out of the repo)"; fail=1 ;;
+    esac
+done
+
+# Token-looking strings in the staged changes.
+if git diff --cached -U0 -- $staged | grep -E '^\+' | grep -v '^+++' |
+   grep -E 'Bearer [A-Za-z0-9._-]{20,}|eyJ[a-zA-Z0-9_-]{20,}\.|-----BEGIN [A-Z ]*PRIVATE KEY|[A-Za-z_]*([Kk]ey|KEY|[Tt]oken|TOKEN|[Ss]ecret|SECRET|[Pp]assword|PASSWORD)[A-Za-z_]*[[:space:]]*[:=][[:space:]]*["'"'"'][A-Za-z0-9._/+-]{16,}["'"'"']|^\+[A-Z_]*(KEY|TOKEN|SECRET|PASSWORD)=[A-Za-z0-9._/+-]{16,}' ; then
+    echo "blocked: the lines above look like secrets"; fail=1
+fi
+
+[ $fail -eq 0 ] || { echo "Commit aborted. Personal values belong in settings.toml or the data folder."; exit 1; }

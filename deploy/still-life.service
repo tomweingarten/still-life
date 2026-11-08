@@ -1,0 +1,15 @@
+# Example systemd unit. Replace youruser and /path/to/still-life.
+[Unit]
+Description=Still Life (Nest Hub art display)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+User=youruser
+WorkingDirectory=/path/to/still-life
+ExecStart=/path/to/still-life/.venv/bin/python still_life.py
+Restart=always
+RestartSec=10
+
+[Install]
+WantedBy=multi-user.target
