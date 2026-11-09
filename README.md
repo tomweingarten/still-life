@@ -51,6 +51,10 @@ Write `data/out/takeover.json`:
 
 Past `until` the file is ignored and the normal board returns.
 
+## Timer bells
+
+Set `[chime] timer_entity` to any Home Assistant on/off entity (a coffee scale's "timer running", say) and the stream gains an audio track: silence, with a soft bell every 30 seconds while the entity is on, each one a step up a C major arpeggio. The bells are written ahead by the Hub's measured lag, so they ring on the mark. A bell already sent to the Hub can't be recalled, so stopping just before one may still get it. Leave `[chime]` out and the stream stays silent, as before. Preview the bells with `python3 chime.py bells.wav`.
+
 ## Privacy
 
 `settings.toml`, the data folder and the token are gitignored, and the pre-commit hook blocks them. Turn it on with `git config core.hooksPath .githooks`. The stream contains everything on screen, so serve it only on your home network.

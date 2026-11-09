@@ -42,6 +42,8 @@ strict one-second cadence and never waits for the renderer.
 
 import argparse
 import bisect
+import fcntl
+import os
 import json
 import random
 import subprocess
@@ -58,6 +60,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 import alerts
 import board
+import chime
 import graphs
 import ha
 import layout
@@ -67,6 +70,7 @@ import transit
 W, H = board.W, board.H
 PORT = settings.STREAM_PORT
 STREAM_PATH = "/live.mp4"
+AMOVIE_EATS = 65536
 FPS_IN = 1                 # frames we hand ffmpeg per second
 # Encoded rate. Plain fps=2 costs ~3% of one N150 core. A slideshow crossfade
 # drawn in 1 s steps needs the framerate filter blending up to 10 fps to play
@@ -440,10 +444,21 @@ def render_loop(frame, stop):
 # --------------------------------------------------------------------- stream
 
 
-def ffmpeg_cmd(smooth=False):
+def ffmpeg_cmd(smooth=False, audio_fd=None):
     fps = FPS_OUT_SMOOTH if smooth else FPS_OUT
     vf = ("format=yuv420p,framerate=fps=%d:interp_start=0:interp_end=255"
           ":scene=100" % fps) if smooth else "fps=%d,format=yuv420p" % fps
+    # The bells (chime.py) arrive as raw PCM on a second pipe, one second per
+    # video frame, so both are timestamped by the same pump ticks. The pipe is
+    # opened by an amovie *filter*, not as a second -i: with two input files
+    # ffmpeg reads pipes non-blocking, and the rawvideo reader then takes a
+    # short read for a whole frame and fails ("packet size 65536 < expected
+    # frame_size").
+    audio = ([] if audio_fd is None else
+             ["-filter_complex",
+              # s16le defaults to 44.1 kHz mono, which is what chime.py makes.
+              "amovie=filename=/dev/fd/%d:f=s16le:format_opts=probesize=32[a]" % audio_fd,
+              "-map", "0:v", "-map", "[a]", "-c:a", "aac", "-b:a", "96k"])
     return [
         "ffmpeg", "-hide_banner", "-loglevel", "error",
         "-f", "rawvideo", "-pix_fmt", "rgb24", "-s", "%dx%d" % (W, H),
@@ -457,6 +472,7 @@ def ffmpeg_cmd(smooth=False):
         "-tune", "stillimage,zerolatency",
         "-g", str(fps * 2), "-keyint_min", str(fps * 2),
         "-sc_threshold", "0", "-b:v", "2000k", "-bf", "0",
+        *audio,
         "-flush_packets", "1",
         # empty_moov+frag_keyframe: playable from the first byte, no moov at the
         # end, which a stream that never ends could never write anyway.
@@ -469,6 +485,7 @@ def ffmpeg_cmd(smooth=False):
 class StreamHandler(BaseHTTPRequestHandler):
     protocol_version = "HTTP/1.1"
     frame = None            # set on the server
+    chimes = None
 
     def log_message(self, fmt, *args):
         log("http %s %s" % (self.client_address[0], fmt % args))
@@ -516,15 +533,31 @@ class StreamHandler(BaseHTTPRequestHandler):
         self.end_headers()
 
         smooth = self.frame.smooth
-        enc = subprocess.Popen(ffmpeg_cmd(smooth), stdin=subprocess.PIPE,
-                               stdout=subprocess.PIPE)
+        audio_r = audio_w = None
+        if self.chimes.enabled:
+            audio_r, audio_w = os.pipe()
+            # Room for several seconds of PCM, so an audio write never blocks
+            # the pump ahead of its video write.
+            try:
+                fcntl.fcntl(audio_w, fcntl.F_SETPIPE_SZ, 1 << 20)
+            except OSError:
+                pass
+        enc = subprocess.Popen(ffmpeg_cmd(smooth, audio_r), stdin=subprocess.PIPE,
+                               stdout=subprocess.PIPE,
+                               pass_fds=(audio_r,) if audio_r is not None else ())
+        if audio_r is not None:
+            os.close(audio_r)
+            # amovie's open swallows its first 64 KiB read (measured: every
+            # bell landed 0.74 s early without this), so give it silence to eat.
+            os.write(audio_w, bytes(AMOVIE_EATS))
         # A fresh object, so a pump still draining the previous stream cannot
         # write into this one's history.
         STREAM.update(smooth=smooth, idx=[], at=[])
         log("stream started (%s)" % ("smooth %d fps" % FPS_OUT_SMOOTH
                                      if smooth else "%d fps" % FPS_OUT))
         stop = threading.Event()
-        pump = threading.Thread(target=self._pump, args=(enc, stop), daemon=True)
+        pump = threading.Thread(target=self._pump, args=(enc, stop, audio_w),
+                                daemon=True)
         pump.start()
         sent = 0
         try:
@@ -544,10 +577,16 @@ class StreamHandler(BaseHTTPRequestHandler):
                 enc.wait(timeout=5)      # reap it; unreaped encoders pile up
             except (OSError, subprocess.TimeoutExpired):
                 pass
+            if audio_w is not None:
+                pump.join(timeout=5)     # it fails out on the dead pipes
+                try:
+                    os.close(audio_w)
+                except OSError:
+                    pass
             log("viewer %s left after %.1f MB" % (self.client_address[0],
                                                   sent / 1e6))
 
-    def _pump(self, enc, stop):
+    def _pump(self, enc, stop, audio_w=None):
         """Feed ffmpeg the latest frame on a strict wall-clock cadence."""
         idx, at = STREAM["idx"], STREAM["at"]
         n = 0
@@ -557,6 +596,11 @@ class StreamHandler(BaseHTTPRequestHandler):
             if raw is not None:
                 sent_at = time.time()
                 try:
+                    if audio_w is not None:
+                        pcm = self.chimes.second(sent_at, self.frame.offset)
+                        view = memoryview(pcm)
+                        while view:
+                            view = view[os.write(audio_w, view):]
                     enc.stdin.write(raw)
                     enc.stdin.flush()
                 except (BrokenPipeError, OSError):
@@ -787,6 +831,8 @@ def main():
     threading.Thread(target=render_loop, args=(frame, stop), daemon=True).start()
 
     StreamHandler.frame = frame
+    StreamHandler.chimes = chime.Chimes(log)
+    StreamHandler.chimes.start(stop)
     srv = ThreadingHTTPServer(("0.0.0.0", args.port), StreamHandler)
     srv.daemon_threads = True
     threading.Thread(target=srv.serve_forever, daemon=True).start()

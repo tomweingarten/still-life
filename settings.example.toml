@@ -20,6 +20,10 @@ ip = "192.168.1.50"           # the Nest Hub
 stream_port = 8099
 # host_ip = "192.168.1.10"    # this machine, as the Hub reaches it (default: detected)
 
+# [chime]                     # bells on the stream while a timer runs (chime.py)
+# timer_entity = "binary_sensor.my_scale_timer_running"   # any HA on/off entity
+# every = 30                  # seconds between bells
+
 [display]
 night_start = 22              # dim art and dark ground from this hour...
 night_end = 6                 # ...until this one
